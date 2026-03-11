@@ -13,9 +13,10 @@ function App() {
         rentalDate: '', rentalEndDate: '', dayRate: '', startMileage: '', endMileage: '', extraKmRate: '', depositPaid: ''
     });
     const [calc, setCalc] = useState({
-        days: 0, dayAmount: 0, allocatedKm: 0, actualKm: 0, extraKm: 0, extraKmCharge: 0, otherChargesTotal: 0, depositRemaining: 0
+        days: 0, dayAmount: 0, allocatedKm: 0, actualKm: 0, extraKm: 0, extraKmCharge: 0, additionsTotal: 0, deductionsTotal: 0, depositRemaining: 0
     });
-    const [otherCharges, setOtherCharges] = useState([]);
+    const [otherAdditions, setOtherAdditions] = useState([]);
+    const [otherDeductions, setOtherDeductions] = useState([]);
 
     useEffect(() => {
         loadRentals();
@@ -24,7 +25,7 @@ function App() {
 
     const calcDays = (s, e) => Math.max(1, Math.ceil((new Date(e) - new Date(s)) / (1000 * 60 * 60 * 24)));
 
-    const updateCalc = (f = form, oc = otherCharges) => {
+    const updateCalc = (f = form, oa = otherAdditions, od = otherDeductions) => {
         const days = calcDays(f.rentalDate, f.rentalEndDate);
         const dayAmt = days * parseFloat(f.dayRate || 0);
         const allocKm = days * 100;
@@ -32,32 +33,41 @@ function App() {
         const exKm = Math.max(0, actKm - allocKm);
         const exCharge = exKm * parseFloat(f.extraKmRate || 0);
         const deposit = parseFloat(f.depositPaid || 0);
-        const otherTotal = oc.reduce((sum, c) => sum + (parseFloat(c.amount) || 0), 0);
-        const total = dayAmt + exCharge + otherTotal;
-        // balance = deposit - total; negative means customer still owes
+        const addTotal = oa.reduce((sum, c) => sum + (parseFloat(c.amount) || 0), 0);
+        const dedTotal = od.reduce((sum, c) => sum + (parseFloat(c.amount) || 0), 0);
+        const total = dayAmt + exCharge + addTotal - dedTotal;
         const depRem = deposit - total;
 
-        setCalc({ days, dayAmount: dayAmt, allocatedKm: allocKm, actualKm: actKm, extraKm: exKm, extraKmCharge: exCharge, otherChargesTotal: otherTotal, depositRemaining: depRem });
+        setCalc({ days, dayAmount: dayAmt, allocatedKm: allocKm, actualKm: actKm, extraKm: exKm, extraKmCharge: exCharge, additionsTotal: addTotal, deductionsTotal: dedTotal, depositRemaining: depRem });
     };
 
     const handleChange = (e) => {
         const f = { ...form, [e.target.name]: e.target.value };
         setForm(f);
-        updateCalc(f);
+        updateCalc(f, otherAdditions, otherDeductions);
     };
 
-    const addOtherCharge = () => {
-        setOtherCharges(oc => [...oc, { label: '', amount: '' }]);
+    const addOtherAddition = () => setOtherAdditions(oa => [...oa, { label: '', amount: '' }]);
+    const removeOtherAddition = (i) => {
+        const oa = otherAdditions.filter((_, idx) => idx !== i);
+        setOtherAdditions(oa);
+        updateCalc(form, oa, otherDeductions);
     };
-    const removeOtherCharge = (i) => {
-        const oc = otherCharges.filter((_, idx) => idx !== i);
-        setOtherCharges(oc);
-        updateCalc(form, oc);
+    const handleOtherAdditionChange = (i, field, value) => {
+        const oa = otherAdditions.map((c, idx) => idx === i ? { ...c, [field]: value } : c);
+        setOtherAdditions(oa);
+        updateCalc(form, oa, otherDeductions);
     };
-    const handleOtherChargeChange = (i, field, value) => {
-        const oc = otherCharges.map((c, idx) => idx === i ? { ...c, [field]: value } : c);
-        setOtherCharges(oc);
-        updateCalc(form, oc);
+    const addOtherDeduction = () => setOtherDeductions(od => [...od, { label: '', amount: '' }]);
+    const removeOtherDeduction = (i) => {
+        const od = otherDeductions.filter((_, idx) => idx !== i);
+        setOtherDeductions(od);
+        updateCalc(form, otherAdditions, od);
+    };
+    const handleOtherDeductionChange = (i, field, value) => {
+        const od = otherDeductions.map((c, idx) => idx === i ? { ...c, [field]: value } : c);
+        setOtherDeductions(od);
+        updateCalc(form, otherAdditions, od);
     };
 
     const handleSubmit = async (e) => {
@@ -65,7 +75,7 @@ function App() {
         const url = edit ? `${API}/rentals/${edit}` : `${API}/rentals`;
         const method = edit ? 'PUT' : 'POST';
         try {
-            await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...form, otherCharges }) });
+            await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...form, otherAdditions, otherDeductions }) });
             resetForm();
             loadRentals();
             loadStats();
@@ -95,10 +105,12 @@ function App() {
             vehicle: r.vehicle, rentalDate: r.rentalDate, rentalEndDate: r.rentalEndDate, dayRate: r.dayRate,
             startMileage: r.startMileage, endMileage: r.endMileage, extraKmRate: r.extraKmRate, depositPaid: r.depositPaid
         };
-        const oc = r.otherCharges ? (typeof r.otherCharges === 'string' ? JSON.parse(r.otherCharges) : r.otherCharges) : [];
+        const oa = r.otherAdditions ? (typeof r.otherAdditions === 'string' ? JSON.parse(r.otherAdditions) : r.otherAdditions) : (r.otherCharges ? (typeof r.otherCharges === 'string' ? JSON.parse(r.otherCharges) : r.otherCharges) : []);
+        const od = r.otherDeductions ? (typeof r.otherDeductions === 'string' ? JSON.parse(r.otherDeductions) : r.otherDeductions) : [];
         setForm(f);
-        setOtherCharges(oc);
-        updateCalc(f, oc);
+        setOtherAdditions(oa);
+        setOtherDeductions(od);
+        updateCalc(f, oa, od);
         setEdit(r.id);
         setTab('form');
         window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -114,9 +126,10 @@ function App() {
 
     const resetForm = () => {
         setForm({ clientName: '', clientPhone: '', clientAddress: '', clientNIC: '', vehicle: '', rentalDate: '', rentalEndDate: '', dayRate: '', startMileage: '', endMileage: '', extraKmRate: '', depositPaid: '' });
-        setOtherCharges([]);
+        setOtherAdditions([]);
+        setOtherDeductions([]);
         setEdit(null);
-        setCalc({ days: 0, dayAmount: 0, allocatedKm: 0, actualKm: 0, extraKm: 0, extraKmCharge: 0, otherChargesTotal: 0, depositRemaining: 0 });
+        setCalc({ days: 0, dayAmount: 0, allocatedKm: 0, actualKm: 0, extraKm: 0, extraKmCharge: 0, additionsTotal: 0, deductionsTotal: 0, depositRemaining: 0 });
     };
 
     const filtered = rentals.filter(r => r.clientName.toLowerCase().includes(search.toLowerCase()) || r.vehicle.toLowerCase().includes(search.toLowerCase()));
@@ -204,24 +217,46 @@ function App() {
                                 </div>
                             </div>
 
-                            {/* Other Charges */}
-                            <div className="bg-zinc-900 border-2 border-red-900 rounded-lg p-6">
+                            {/* Other Additions */}
+                            <div className="bg-zinc-900 border-2 border-blue-900 rounded-lg p-6">
                                 <div className="flex items-center justify-between mb-4">
-                                    <h3 className="text-lg font-bold text-red-300">🧾 Other Charges</h3>
-                                    <button type="button" onClick={addOtherCharge} className="flex items-center gap-2 bg-red-800 hover:bg-red-700 text-white px-4 py-2 rounded-lg border border-red-600 text-sm font-bold transition-all duration-200">＋ Add</button>
+                                    <h3 className="text-lg font-bold text-blue-300">➕ Other Additions</h3>
+                                    <button type="button" onClick={addOtherAddition} className="flex items-center gap-2 bg-blue-800 hover:bg-blue-700 text-white px-4 py-2 rounded-lg border border-blue-600 text-sm font-bold transition-all duration-200">＋ Add</button>
                                 </div>
-                                {otherCharges.length === 0 ? (
-                                    <p className="text-zinc-500 text-sm">No extra charges. Click ＋ Add to include additional charges.</p>
+                                {otherAdditions.length === 0 ? (
+                                    <p className="text-zinc-500 text-sm">No additions. Click ＋ Add to include extra charges (e.g. Fuel, Extra Day).</p>
                                 ) : (
                                     <div className="space-y-3">
-                                        {otherCharges.map((c, i) => (
+                                        {otherAdditions.map((c, i) => (
                                             <div key={i} className="flex gap-3 items-center">
-                                                <input type="text" placeholder="Description (e.g. Fuel, Cleaning)" value={c.label} onChange={e => handleOtherChargeChange(i, 'label', e.target.value)} className={`flex-1 ${inputBase}`} />
-                                                <input type="number" placeholder="Amount" step="0.01" value={c.amount} onChange={e => handleOtherChargeChange(i, 'amount', e.target.value)} className={`w-36 ${inputBase}`} />
-                                                <button type="button" onClick={() => removeOtherCharge(i)} className="bg-black hover:bg-zinc-900 text-red-400 border border-red-600 px-3 py-2 rounded-lg font-bold transition-all duration-200">✕</button>
+                                                <input type="text" placeholder="Description (e.g. Fuel, Extra Day)" value={c.label} onChange={e => handleOtherAdditionChange(i, 'label', e.target.value)} className={`flex-1 ${inputBase}`} />
+                                                <input type="number" placeholder="Amount" step="0.01" value={c.amount} onChange={e => handleOtherAdditionChange(i, 'amount', e.target.value)} className={`w-36 ${inputBase}`} />
+                                                <button type="button" onClick={() => removeOtherAddition(i)} className="bg-black hover:bg-zinc-900 text-red-400 border border-red-600 px-3 py-2 rounded-lg font-bold transition-all duration-200">✕</button>
                                             </div>
                                         ))}
-                                        <p className="text-right text-orange-300 font-semibold text-sm pt-2 border-t border-zinc-700">Other Total: Rs.{calc.otherChargesTotal.toFixed(2)}</p>
+                                        <p className="text-right text-blue-300 font-semibold text-sm pt-2 border-t border-zinc-700">Additions Total: +Rs.{calc.additionsTotal.toFixed(2)}</p>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Other Deductions */}
+                            <div className="bg-zinc-900 border-2 border-yellow-900 rounded-lg p-6">
+                                <div className="flex items-center justify-between mb-4">
+                                    <h3 className="text-lg font-bold text-yellow-300">➖ Other Deductions</h3>
+                                    <button type="button" onClick={addOtherDeduction} className="flex items-center gap-2 bg-yellow-800 hover:bg-yellow-700 text-white px-4 py-2 rounded-lg border border-yellow-600 text-sm font-bold transition-all duration-200">＋ Add</button>
+                                </div>
+                                {otherDeductions.length === 0 ? (
+                                    <p className="text-zinc-500 text-sm">No deductions. Click ＋ Add to include discounts or deductions (e.g. Discount, Refund).</p>
+                                ) : (
+                                    <div className="space-y-3">
+                                        {otherDeductions.map((c, i) => (
+                                            <div key={i} className="flex gap-3 items-center">
+                                                <input type="text" placeholder="Description (e.g. Discount, Refund)" value={c.label} onChange={e => handleOtherDeductionChange(i, 'label', e.target.value)} className={`flex-1 ${inputBase}`} />
+                                                <input type="number" placeholder="Amount" step="0.01" value={c.amount} onChange={e => handleOtherDeductionChange(i, 'amount', e.target.value)} className={`w-36 ${inputBase}`} />
+                                                <button type="button" onClick={() => removeOtherDeduction(i)} className="bg-black hover:bg-zinc-900 text-red-400 border border-red-600 px-3 py-2 rounded-lg font-bold transition-all duration-200">✕</button>
+                                            </div>
+                                        ))}
+                                        <p className="text-right text-yellow-300 font-semibold text-sm pt-2 border-t border-zinc-700">Deductions Total: −Rs.{calc.deductionsTotal.toFixed(2)}</p>
                                     </div>
                                 )}
                             </div>
@@ -229,10 +264,11 @@ function App() {
                             {/* Summary */}
                             <div className="bg-gradient-to-r from-zinc-950 to-zinc-900 border-2 border-red-900 rounded-lg p-6">
                                 <h3 className="text-lg font-bold text-red-300 mb-4">✅ Summary</h3>
-                                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
                                     <div className="bg-zinc-900 p-4 rounded-lg border border-green-700"><p className="text-xs text-zinc-400">Alloc KM</p><p className="text-2xl font-bold text-green-400">{calc.allocatedKm}</p></div>
                                     <div className="bg-zinc-900 p-4 rounded-lg border border-purple-700"><p className="text-xs text-zinc-400">Extra KM</p><p className="text-2xl font-bold text-purple-400">{calc.extraKm}</p></div>
-                                    <div className="bg-zinc-900 p-4 rounded-lg border border-orange-700"><p className="text-xs text-zinc-400">Other Charges</p><p className="text-2xl font-bold text-orange-400">Rs.{calc.otherChargesTotal.toFixed(2)}</p></div>
+                                    <div className="bg-zinc-900 p-4 rounded-lg border border-blue-700"><p className="text-xs text-zinc-400">Additions</p><p className="text-2xl font-bold text-blue-400">+Rs.{calc.additionsTotal.toFixed(2)}</p></div>
+                                    <div className="bg-zinc-900 p-4 rounded-lg border border-yellow-700"><p className="text-xs text-zinc-400">Deductions</p><p className="text-2xl font-bold text-yellow-400">−Rs.{calc.deductionsTotal.toFixed(2)}</p></div>
                                     <div className={`bg-zinc-900 p-4 rounded-lg border ${calc.depositRemaining >= 0 ? 'border-green-700' : 'border-red-500'}`}>
                                         <p className="text-xs text-zinc-400">Balance</p>
                                         <p className={`text-2xl font-bold ${calc.depositRemaining >= 0 ? 'text-green-400' : 'text-red-500'}`}>Rs.{calc.depositRemaining.toFixed(2)}</p>
@@ -241,7 +277,7 @@ function App() {
                                 {calc.depositRemaining < 0 && (
                                     <div className="mt-4 p-3 bg-yellow-900 border border-yellow-700 rounded-lg">
                                         <p className="text-yellow-200 text-sm font-semibold">⚠️ Customer owes Rs.{Math.abs(calc.depositRemaining).toFixed(2)}</p>
-                                        <p className="text-yellow-100 text-xs mt-1">Total: Day Amount (Rs.{calc.dayAmount.toFixed(2)}) + Extra (Rs.{calc.extraKmCharge.toFixed(2)}){calc.otherChargesTotal !== 0 ? ` + Other (Rs.${calc.otherChargesTotal.toFixed(2)})` : ''} − Deposit (Rs.{parseFloat(form.depositPaid || 0).toFixed(2)})</p>
+                                        <p className="text-yellow-100 text-xs mt-1">Total: Day Amount (Rs.{calc.dayAmount.toFixed(2)}) + Extra (Rs.{calc.extraKmCharge.toFixed(2)}){calc.additionsTotal > 0 ? ` + Additions (Rs.${calc.additionsTotal.toFixed(2)})` : ''}{calc.deductionsTotal > 0 ? ` − Deductions (Rs.${calc.deductionsTotal.toFixed(2)})` : ''} − Deposit (Rs.{parseFloat(form.depositPaid || 0).toFixed(2)})</p>
                                     </div>
                                 )}
                             </div>
@@ -315,7 +351,7 @@ function App() {
                             <div className="bg-gradient-to-br from-green-900 to-black text-white p-6 rounded-lg shadow-lg border border-green-800 md:col-span-2">
                                 <p className="text-sm opacity-80">Total Earned</p>
                                 <p className="text-5xl font-bold mt-2 text-green-400">Rs.{(stats.totalEarned || 0).toFixed(2)}</p>
-                                <p className="text-xs text-zinc-400 mt-2">Day Amount (Rs.{(stats.totalDayAmount || 0).toFixed(2)}) + Extra KM (Rs.{(stats.totalExtraCharges || 0).toFixed(2)}) + Other (Rs.{(stats.totalOtherCharges || 0).toFixed(2)})</p>
+                                <p className="text-xs text-zinc-400 mt-2">Day Amount (Rs.{(stats.totalDayAmount || 0).toFixed(2)}) + Extra KM (Rs.{(stats.totalExtraCharges || 0).toFixed(2)}) + Additions (Rs.{(stats.totalAdditions || 0).toFixed(2)}) − Deductions (Rs.{(stats.totalDeductions || 0).toFixed(2)})</p>
                             </div>
                         </div>
 
@@ -333,7 +369,8 @@ function App() {
                                                 <th className="p-3 text-center">Rentals</th>
                                                 <th className="p-3 text-right">Day Amount</th>
                                                 <th className="p-3 text-right">Extra KM</th>
-                                                <th className="p-3 text-right">Other</th>
+                                                <th className="p-3 text-right text-blue-300">Additions</th>
+                                                <th className="p-3 text-right text-yellow-300">Deductions</th>
                                                 <th className="p-3 text-right font-bold text-green-400">Total Earned</th>
                                             </tr>
                                         </thead>
@@ -344,7 +381,8 @@ function App() {
                                                     <td className="p-3 text-center text-zinc-300">{v.rentals}</td>
                                                     <td className="p-3 text-right text-zinc-300">Rs.{v.dayAmount.toFixed(2)}</td>
                                                     <td className="p-3 text-right text-zinc-300">Rs.{v.extraCharges.toFixed(2)}</td>
-                                                    <td className="p-3 text-right text-zinc-300">Rs.{v.otherCharges.toFixed(2)}</td>
+                                                    <td className="p-3 text-right text-blue-400">Rs.{(v.additions || 0).toFixed(2)}</td>
+                                                    <td className="p-3 text-right text-yellow-400">Rs.{(v.deductions || 0).toFixed(2)}</td>
                                                     <td className="p-3 text-right font-bold text-green-400">Rs.{v.earned.toFixed(2)}</td>
                                                 </tr>
                                             ))}
@@ -355,7 +393,8 @@ function App() {
                                                 <td className="p-3 text-center text-zinc-200">{stats.totalRentals}</td>
                                                 <td className="p-3 text-right text-zinc-200">Rs.{(stats.totalDayAmount || 0).toFixed(2)}</td>
                                                 <td className="p-3 text-right text-zinc-200">Rs.{(stats.totalExtraCharges || 0).toFixed(2)}</td>
-                                                <td className="p-3 text-right text-zinc-200">Rs.{(stats.totalOtherCharges || 0).toFixed(2)}</td>
+                                                <td className="p-3 text-right text-blue-400">Rs.{(stats.totalAdditions || 0).toFixed(2)}</td>
+                                                <td className="p-3 text-right text-yellow-400">Rs.{(stats.totalDeductions || 0).toFixed(2)}</td>
                                                 <td className="p-3 text-right text-green-400">Rs.{(stats.totalEarned || 0).toFixed(2)}</td>
                                             </tr>
                                         </tfoot>

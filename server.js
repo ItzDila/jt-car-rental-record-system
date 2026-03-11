@@ -21,6 +21,10 @@ const db = new sqlite3.Database(dbPath);
 // Migrate: add new columns if they don't exist (safe to run repeatedly)
 db.run(`ALTER TABLE rentals ADD COLUMN otherCharges TEXT DEFAULT '[]'`, () => {});
 db.run(`ALTER TABLE rentals ADD COLUMN otherChargesTotal REAL DEFAULT 0`, () => {});
+db.run(`ALTER TABLE rentals ADD COLUMN otherAdditions TEXT DEFAULT '[]'`, () => {});
+db.run(`ALTER TABLE rentals ADD COLUMN otherDeductions TEXT DEFAULT '[]'`, () => {});
+db.run(`ALTER TABLE rentals ADD COLUMN additionsTotal REAL DEFAULT 0`, () => {});
+db.run(`ALTER TABLE rentals ADD COLUMN deductionsTotal REAL DEFAULT 0`, () => {});
 
 const calculateDays = (start, end) => Math.max(1, Math.ceil((new Date(end) - new Date(start)) / (1000 * 60 * 60 * 24)));
 
@@ -32,11 +36,14 @@ const calc = (d) => {
     const exKm = Math.max(0, actKm - allocKm);
     const exCharge = exKm * parseFloat(d.extraKmRate);
     const deposit = parseFloat(d.depositPaid) || 0;
-    const otherArr = Array.isArray(d.otherCharges) ? d.otherCharges : (() => { try { return JSON.parse(d.otherCharges || '[]'); } catch(e) { return []; } })();
-    const otherTotal = otherArr.reduce((sum, c) => sum + (parseFloat(c.amount) || 0), 0);
-    const total = dayAmt + exCharge + otherTotal;
+    const parseArr = (v) => Array.isArray(v) ? v : (() => { try { return JSON.parse(v || '[]'); } catch(e) { return []; } })();
+    const addArr = parseArr(d.otherAdditions);
+    const dedArr = parseArr(d.otherDeductions);
+    const addTotal = addArr.reduce((sum, c) => sum + (parseFloat(c.amount) || 0), 0);
+    const dedTotal = dedArr.reduce((sum, c) => sum + (parseFloat(c.amount) || 0), 0);
+    const total = dayAmt + exCharge + addTotal - dedTotal;
     const depRem = deposit - total;
-    return { days, dayAmount: dayAmt.toFixed(2), allocatedKm: allocKm, actualKm: actKm, extraKm: exKm, extraKmCharge: exCharge.toFixed(2), otherChargesTotal: otherTotal.toFixed(2), depositRemaining: depRem.toFixed(2) };
+    return { days, dayAmount: dayAmt.toFixed(2), allocatedKm: allocKm, actualKm: actKm, extraKm: exKm, extraKmCharge: exCharge.toFixed(2), additionsTotal: addTotal.toFixed(2), deductionsTotal: dedTotal.toFixed(2), depositRemaining: depRem.toFixed(2) };
 };
 
 app.get('/api/rentals', (req, res) => {
@@ -67,8 +74,10 @@ app.get('/api/rentals/export/xlsx', (req, res) => {
             ExtraKm: r.extraKm,
             ExtraKmRate: r.extraKmRate,
             ExtraKmCharge: r.extraKmCharge,
-            OtherCharges: r.otherCharges,
-            OtherChargesTotal: r.otherChargesTotal,
+            OtherAdditions: r.otherAdditions,
+            OtherDeductions: r.otherDeductions,
+            AdditionsTotal: r.additionsTotal,
+            DeductionsTotal: r.deductionsTotal,
             DepositRemaining: r.depositRemaining,
             Status: r.status,
             CreatedAt: r.createdAt,
@@ -93,24 +102,26 @@ app.post('/api/rentals', (req, res) => {
     const id = uuidv4();
     const c = calc(req.body);
     const now = new Date().toISOString();
-    const otherJson = JSON.stringify(Array.isArray(req.body.otherCharges) ? req.body.otherCharges : []);
-    db.run(`INSERT INTO rentals (id, clientName, clientPhone, clientAddress, clientNIC, vehicle, rentalDate, rentalEndDate, days, dayRate, dayAmount, depositPaid, startMileage, endMileage, allocatedKm, actualKm, extraKm, extraKmRate, extraKmCharge, depositRemaining, otherCharges, otherChargesTotal, status, createdAt, updatedAt) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    const addJson = JSON.stringify(Array.isArray(req.body.otherAdditions) ? req.body.otherAdditions : []);
+    const dedJson = JSON.stringify(Array.isArray(req.body.otherDeductions) ? req.body.otherDeductions : []);
+    db.run(`INSERT INTO rentals (id, clientName, clientPhone, clientAddress, clientNIC, vehicle, rentalDate, rentalEndDate, days, dayRate, dayAmount, depositPaid, startMileage, endMileage, allocatedKm, actualKm, extraKm, extraKmRate, extraKmCharge, depositRemaining, otherAdditions, otherDeductions, additionsTotal, deductionsTotal, status, createdAt, updatedAt) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [id, req.body.clientName, req.body.clientPhone, req.body.clientAddress, req.body.clientNIC, req.body.vehicle,
          req.body.rentalDate, req.body.rentalEndDate, c.days, req.body.dayRate, c.dayAmount, req.body.depositPaid,
          req.body.startMileage, req.body.endMileage, c.allocatedKm, c.actualKm, c.extraKm, req.body.extraKmRate, c.extraKmCharge, c.depositRemaining,
-         otherJson, c.otherChargesTotal, 'active', now, now],
+         addJson, dedJson, c.additionsTotal, c.deductionsTotal, 'active', now, now],
         () => res.json({ id, ...req.body, ...c }));
 });
 
 app.put('/api/rentals/:id', (req, res) => {
     const c = calc(req.body);
     const now = new Date().toISOString();
-    const otherJson = JSON.stringify(Array.isArray(req.body.otherCharges) ? req.body.otherCharges : []);
-    db.run(`UPDATE rentals SET clientName=?, clientPhone=?, clientAddress=?, clientNIC=?, vehicle=?, rentalDate=?, rentalEndDate=?, days=?, dayRate=?, dayAmount=?, depositPaid=?, startMileage=?, endMileage=?, allocatedKm=?, actualKm=?, extraKm=?, extraKmRate=?, extraKmCharge=?, depositRemaining=?, otherCharges=?, otherChargesTotal=?, updatedAt=? WHERE id=?`,
+    const addJson = JSON.stringify(Array.isArray(req.body.otherAdditions) ? req.body.otherAdditions : []);
+    const dedJson = JSON.stringify(Array.isArray(req.body.otherDeductions) ? req.body.otherDeductions : []);
+    db.run(`UPDATE rentals SET clientName=?, clientPhone=?, clientAddress=?, clientNIC=?, vehicle=?, rentalDate=?, rentalEndDate=?, days=?, dayRate=?, dayAmount=?, depositPaid=?, startMileage=?, endMileage=?, allocatedKm=?, actualKm=?, extraKm=?, extraKmRate=?, extraKmCharge=?, depositRemaining=?, otherAdditions=?, otherDeductions=?, additionsTotal=?, deductionsTotal=?, updatedAt=? WHERE id=?`,
         [req.body.clientName, req.body.clientPhone, req.body.clientAddress, req.body.clientNIC, req.body.vehicle,
          req.body.rentalDate, req.body.rentalEndDate, c.days, req.body.dayRate, c.dayAmount, req.body.depositPaid,
          req.body.startMileage, req.body.endMileage, c.allocatedKm, c.actualKm, c.extraKm, req.body.extraKmRate, c.extraKmCharge, c.depositRemaining,
-         otherJson, c.otherChargesTotal, now, req.params.id],
+         addJson, dedJson, c.additionsTotal, c.deductionsTotal, now, req.params.id],
         () => res.json({ id: req.params.id, ...req.body, ...c }));
 });
 
@@ -123,22 +134,25 @@ app.get('/api/statistics', (req, res) => {
         if (err) return res.status(500).json({ error: err.message });
         const r2 = rows || [];
         const vehicleMap = {};
-        const stats = { totalRentals: r2.length, totalDayAmount: 0, totalExtraCharges: 0, totalOtherCharges: 0, totalEarned: 0, vehicles: [] };
+        const stats = { totalRentals: r2.length, totalDayAmount: 0, totalExtraCharges: 0, totalAdditions: 0, totalDeductions: 0, totalEarned: 0, vehicles: [] };
         r2.forEach(r => {
             const dayAmt = parseFloat(r.dayAmount) || 0;
             const exCharge = parseFloat(r.extraKmCharge) || 0;
-            const otherAmt = parseFloat(r.otherChargesTotal) || 0;
-            const earned = dayAmt + exCharge + otherAmt;
+            const addAmt = parseFloat(r.additionsTotal) || parseFloat(r.otherChargesTotal) || 0;
+            const dedAmt = parseFloat(r.deductionsTotal) || 0;
+            const earned = dayAmt + exCharge + addAmt - dedAmt;
             stats.totalDayAmount += dayAmt;
             stats.totalExtraCharges += exCharge;
-            stats.totalOtherCharges += otherAmt;
+            stats.totalAdditions += addAmt;
+            stats.totalDeductions += dedAmt;
             stats.totalEarned += earned;
             const vKey = (r.vehicle || 'Unknown').trim();
-            if (!vehicleMap[vKey]) vehicleMap[vKey] = { vehicle: vKey, rentals: 0, dayAmount: 0, extraCharges: 0, otherCharges: 0, earned: 0 };
+            if (!vehicleMap[vKey]) vehicleMap[vKey] = { vehicle: vKey, rentals: 0, dayAmount: 0, extraCharges: 0, additions: 0, deductions: 0, earned: 0 };
             vehicleMap[vKey].rentals += 1;
             vehicleMap[vKey].dayAmount += dayAmt;
             vehicleMap[vKey].extraCharges += exCharge;
-            vehicleMap[vKey].otherCharges += otherAmt;
+            vehicleMap[vKey].additions += addAmt;
+            vehicleMap[vKey].deductions += dedAmt;
             vehicleMap[vKey].earned += earned;
         });
         stats.vehicles = Object.values(vehicleMap).sort((a, b) => b.earned - a.earned);
@@ -232,18 +246,23 @@ app.get('/api/rentals/:id/pdf', (req, res) => {
             y += 23;
         };
 
-        drawChargeRow(`Day Rate x ${r.days} day(s)`, `${money(r.dayRate)} x ${r.days}`, '#f9fafb');
-        drawChargeRow('Day Amount', money(r.dayAmount));
         drawChargeRow(`Included Mileage (${r.days} x 100 km)`, `${r.allocatedKm} km`, '#f9fafb');
         drawChargeRow(`Extra Mileage (${r.extraKm} km x ${money(r.extraKmRate)})`, `${r.extraKm} km`, '#ffffff');
+        drawChargeRow(`Day Rate x ${r.days} day(s)`, `${money(r.dayRate)} x ${r.days}`, '#f9fafb');
+        drawChargeRow('Day Amount', money(r.dayAmount));
         drawChargeRow('Extra Mileage Charge', money(r.extraKmCharge), '#f9fafb');
-        const otherChargesArr = r.otherCharges ? (() => { try { return JSON.parse(r.otherCharges); } catch(e) { return []; } })() : [];
-        otherChargesArr.forEach((c, i) => {
-            drawChargeRow(c.label || `Other Charge ${i + 1}`, money(c.amount), i % 2 === 0 ? '#ffffff' : '#f9fafb');
-        });
-        if (otherChargesArr.length > 0) {
-            const reasons = otherChargesArr.map((c, i) => c.label || `Charge ${i + 1}`).join(', ');
-            drawChargeRow(`Other Charges Total (${reasons})`, money(r.otherChargesTotal), '#f3f4f6');
+        const parseArr = (v) => { try { return JSON.parse(v || '[]'); } catch(e) { return []; } };
+        const additionsArr = r.otherAdditions ? parseArr(r.otherAdditions) : (r.otherCharges ? parseArr(r.otherCharges) : []);
+        const deductionsArr = r.otherDeductions ? parseArr(r.otherDeductions) : [];
+        if (additionsArr.length > 0) {
+            additionsArr.forEach((c, i) => {
+                drawChargeRow(`+ ${c.label || `Addition ${i + 1}`}`, money(c.amount), i % 2 === 0 ? '#f0fdf4' : '#dcfce7');
+            });
+            drawChargeRow('Additions Total', money(r.additionsTotal || 0), '#bbf7d0');
+        }
+        if (deductionsArr.length > 0) {
+            const dedReasons = deductionsArr.map((c, i) => c.label || `Deduction ${i + 1}`).join(', ');
+            drawChargeRow(`Total Deductions (${dedReasons})`, `- ${money(r.deductionsTotal || 0)}`, '#fef3c7');
         }
         drawChargeRow('Deposit Paid', money(r.depositPaid), '#ffffff');
 
